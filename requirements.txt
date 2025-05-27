@@ -1,0 +1,63 @@
+# --- PyTorch Core ---
+# 官方建议从官网获取特定CUDA版本的命令，例如：
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# 这里我们只列出包名，具体版本和安装方式请参考 PyTorch 官网
+torch
+torchvision
+torchaudio
+
+# --- Hugging Face Ecosystem (NLP 必备) ---
+transformers
+datasets
+tokenizers
+accelerate # 用于简化分布式训练和混合精度
+evaluate   # Hugging Face 官方评估库 (BLEU, ROUGE 等)
+
+# --- 其他常用 NLP 库 ---
+nltk         # 经典 NLP 库，用于分词、词性标注、语料库等
+spacy        # 工业级 NLP 库，支持多种语言，模型需单独下载
+# python -m spacy download en_core_web_sm (示例)
+gensim       # 主题模型 (LDA, LSI), 词向量 (Word2Vec, FastText)
+sentence-transformers # 用于生成句子/文本嵌入
+
+# --- 通用机器学习与数据处理 ---
+scikit-learn # 经典机器学习库
+pandas       # 数据分析和处理，DataFrame
+numpy        # 科学计算基础库
+scipy        # 科学计算与技术计算 (依赖 numpy)
+
+# --- 数据可视化 ---
+matplotlib
+seaborn
+
+# --- 实验跟踪与超参数优化 (可选，但推荐) ---
+tensorboard  # PyTorch 自带的可视化工具
+# wandb        # Weights & Biases, 强大的实验跟踪平台 (可选)
+# optuna       # 超参数自动优化框架 (可选)
+# mlflow       # 另一个流行的 MLOps 平台 (可选)
+
+# --- PyTorch 生态与辅助 ---
+pytorch-lightning # PyTorch 高级封装，简化训练流程 (可选，但非常推荐)
+# hydra-core      # 灵活的配置文件管理 (可选，适合复杂项目)
+# omegaconf       # Hydra 的配置对象系统 (可选)
+
+# --- 实用工具 ---
+tqdm         # 进度条显示
+requests     # HTTP 请求库，用于下载数据等
+python-dotenv # 从 .env 文件加载环境变量
+jupyterlab   # 交互式笔记本环境 (或 notebook)
+ipywidgets   # Jupyter 笔记本的交互式小部件
+# pre-commit   # Git commit 前的代码检查和格式化 (开发工具)
+# black        # Python 代码格式化工具 (开发工具)
+# flake8       # Python 代码风格检查和错误检查 (开发工具)
+# isort        # Python import 排序工具 (开发工具)
+
+# --- 其他可能用到的 (根据具体任务) ---
+# Pillow       # 图像处理库 (PIL fork)
+# opencv-python # 计算机视觉库
+# beautifulsoup4 # HTML/XML 解析库
+# lxml         # 高效的 XML 和 HTML 处理库
+# rouge-score  # ROUGE 评分，常用于文本摘要评估
+# sacrebleu    # BLEU 评分，常用于机器翻译评估
+# fuzzywuzzy   # 模糊字符串匹配
+# python-Levenshtein # 快速计算编辑距离 (fuzzywuzzy 可能需要)
