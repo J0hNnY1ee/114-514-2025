@@ -9,14 +9,14 @@ from typing import List, Dict
 # 模块导入
 try:
     from data_process.preprocessor import GROUP_CATEGORIES, GROUP_TO_ID, ID_TO_GROUP # 需要类别和映射
-    from models.group_clf_model import RobertaForTargetedGroupClassification
+    from model.group_clf_model import RobertaForTargetedGroupClassification
     from data_process.group_clf_dataset import TargetedGroupClassificationDataset
     from training.trainer_base import GeneralTrainer
 except ImportError as e:
     print(f"Import Error in group_clf_train.py: {e}. Check PYTHONPATH and structure.")
     try:
         from ..data_process.preprocessor import GROUP_CATEGORIES, GROUP_TO_ID, ID_TO_GROUP
-        from ..models.group_clf_model import RobertaForTargetedGroupClassification
+        from ..model.group_clf_model import RobertaForTargetedGroupClassification
         from ..data_process.group_clf_dataset import TargetedGroupClassificationDataset
         from .trainer_base import GeneralTrainer
     except ImportError:

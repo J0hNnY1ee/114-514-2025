@@ -5,7 +5,7 @@ from typing import List, Dict, Union, Optional
 
 try:
     # 假设模型定义在 models.hate_clf_model
-    from models.hate_clf_model import RobertaForHatefulClassification
+    from model.hate_clf_model import RobertaForHatefulClassification
     # 假设标签映射在 data_process.preprocessor
     from data_process.preprocessor import HATEFUL_TO_ID, ID_TO_HATEFUL, HATEFUL_CATEGORIES
 except ImportError as e:

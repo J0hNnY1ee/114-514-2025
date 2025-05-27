@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Tuple, Union
 import os
 
 try:
-    from models.ie_model import RobertaForMultiLabelTokenClassification 
+    from model.ie_model import RobertaForMultiLabelTokenClassification 
     from data_process.preprocessor import GENERIC_ID_TO_IOB_LABEL, GENERIC_IOB_LABELS, IGNORE_INDEX
 except ImportError as e:
     print(f"ImportError in InformationExtractor: {e}. 确保 model.py 和 preprocessor.py 可访问。")

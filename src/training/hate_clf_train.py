@@ -9,14 +9,14 @@ from typing import List, Dict
 # 模块导入 (根据你的项目结构调整)
 try:
     from data_process.preprocessor import HATEFUL_CATEGORIES, HATEFUL_TO_ID # 需要类别数量和ID到标签的映射
-    from models.hate_clf_model import RobertaForHatefulClassification
+    from model.hate_clf_model import RobertaForHatefulClassification
     from data_process.hate_clf_dataset import HateClassificationDataset
     from training.trainer_base import GeneralTrainer
 except ImportError as e:
     print(f"Import Error: {e}. Please check your PYTHONPATH and project structure.")
     try:
         from ..data_process.preprocessor import HATEFUL_CATEGORIES, HATEFUL_TO_ID
-        from ..models.hate_clf_model import RobertaForHatefulClassification
+        from ..model.hate_clf_model import RobertaForHatefulClassification
         from ..data_process.hate_clf_dataset import HateClassificationDataset
         from .trainer_base import GeneralTrainer
     except ImportError:

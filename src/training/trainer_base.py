@@ -467,7 +467,7 @@ if __name__ == "__main__":
 
     # 0. 准备：确保有 preprocessor.py, model.py, ie_dataset.py
     from data_process.preprocessor import IE_ID_TO_LABEL, IE_LABELS
-    from models.ie_model import RobertaForTokenClassification
+    from model.ie_model import RobertaForTokenClassification
     from data_process.ie_dataset import HateIEDataset
 
     # 1. 定义参数

@@ -5,7 +5,7 @@ from typing import List, Dict, Union, Optional
 
 try:
 
-    from models.group_clf_model import RobertaForTargetedGroupClassification
+    from model.group_clf_model import RobertaForTargetedGroupClassification
     from data_process.preprocessor import GROUP_TO_ID, ID_TO_GROUP, GROUP_CATEGORIES
 except ImportError as e:
     print(f"ImportError in GroupClassifier: {e}. Ensure relevant modules are accessible.")

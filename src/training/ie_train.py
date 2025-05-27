@@ -10,7 +10,7 @@ try:
     # 从 preprocessor 导入通用IOB定义
     from data_process.preprocessor import GENERIC_ID_TO_IOB_LABEL, GENERIC_IOB_LABELS, IGNORE_INDEX
     # 从 ie_model 导入新的多标签模型类
-    from models.ie_model import RobertaForMultiLabelTokenClassification
+    from model.ie_model import RobertaForMultiLabelTokenClassification
     from data_process.ie_dataset import HateIEDataset # 这个应该已经是适配两层标签的版本了
     from training.trainer_base import GeneralTrainer # trainer_base 可能也需要调整evaluate
     SEQEVAL_AVAILABLE = True # 假设 seqeval 已经集成在 trainer_base 或这里
