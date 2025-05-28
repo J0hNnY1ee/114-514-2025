@@ -3,3 +3,4 @@ models
 .conda
 __pycache__
 NLP_2025.egg-info
+*.log

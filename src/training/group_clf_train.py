@@ -247,7 +247,7 @@ if __name__ == "__main__":
     # 训练参数
     parser.add_argument("--output_dir_root", type=str, default="models/outputs", help="Root directory for model outputs.")
     parser.add_argument("--num_train_epochs", type=int, default=20, help="Number of training epochs.")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate.")
     # ... (其他与hate_clf_train.py相同的训练参数)
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay.")

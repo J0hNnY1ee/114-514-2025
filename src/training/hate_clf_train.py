@@ -31,8 +31,6 @@ def compute_hateful_classification_metrics(
     计算二分类 (Hateful/Non-Hateful) 的评估指标。
     接收模型输出批次列表和输入批次列表。
     """
-    print(f"DEBUG compute_metrics: Received {len(list_of_batch_model_outputs_cpu)} model output batches.")
-    print(f"DEBUG compute_metrics: Received {len(list_of_batch_inputs_cpu)} input batches.")
 
     all_true_labels_flat = []
     all_predictions_flat = []
@@ -269,7 +267,7 @@ if __name__ == "__main__":
     # 训练参数
     parser.add_argument("--output_dir_root", type=str, default="models/outputs", help="Root directory where model outputs will be saved.")
     parser.add_argument("--num_train_epochs", type=int, default=20, help="Total number of training epochs.")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training and evaluation.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training and evaluation.")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Initial learning rate.")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay.")
     parser.add_argument("--warmup_steps", type=int, default=100, help="Linear warmup over warmup_steps.")
