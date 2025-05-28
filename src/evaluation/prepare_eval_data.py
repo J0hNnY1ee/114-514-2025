@@ -203,7 +203,7 @@ def create_paired_eval_file(predictions_filepath: str,
 if __name__ == "__main__":
     import os 
     
-    PREDICTIONS_FILE = "data/outputs/pipeline_final_predictions.json" 
+    PREDICTIONS_FILE = "data/outputs/pipeline_llm_final_predictions.json" 
     GOLD_STANDARD_FILE = "data/segment/test.json" 
     PAIRED_EVAL_OUTPUT_FILE = "data/outputs/evaluation_paired_data.jsonl" 
 
