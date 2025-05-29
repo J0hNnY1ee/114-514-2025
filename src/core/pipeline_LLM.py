@@ -8,7 +8,7 @@ import traceback
 # 假设其他分类器和HateOriDataset的导入路径不变
 try:
     # from core.information_extractor import InformationExtractor # 旧的IE
-    from core.information_extractor_llm import InformationExtractor_LLM # 
+    from core.information_extractor_llm import InformationExtractor_LLM #
     from core.hate_classifier import HateClassifier
     from core.group_classifier import GroupClassifier
     from data_process.loader import HateOriDataset
@@ -112,7 +112,6 @@ class SentimentPipeline_LLM:
         return " [SEP] ".join(parts) + " [END]"
 
 
-    # process_dataset 方法只需要修改IE部分的调用，其他逻辑保持不变
     def process_dataset(self,
                         input_data_tuples: List[Tuple[Union[int, str], str]],
                         pipeline_batch_size: int = 16, # IE_LLM 也可以分批处理输入文本
@@ -120,9 +119,17 @@ class SentimentPipeline_LLM:
                        ) -> List[Dict]:
         if not input_data_tuples: return []
         num_items = len(input_data_tuples)
+        
+        # 这个 pipeline_batch_size 是针对IE LLM阶段的，即一次处理多少原始文本
+        # 对于后续分类器，它们处理的是TA对，数量可能远大于原始文本数
+        # 我们将为分类器定义一个内部的批处理大小
+        classifier_internal_batch_size = 8 # 为分类器（Hate, Group）设置一个更保守的批处理大小
+
         num_ie_batches = (num_items + pipeline_batch_size - 1) // pipeline_batch_size
         print(f"Processing dataset '{base_filename_for_saving}' with {num_items} items using LLM_1 pipeline.")
         print(f"IE_LLM stage will use {num_ie_batches} batches (batch size: {pipeline_batch_size}).")
+        print(f"Downstream classifiers (Hate, Group) will use internal batch size: {classifier_internal_batch_size}.")
+
 
         # --- 阶段1: 信息抽取 (使用 InformationExtractor_LLM) ---
         print(f"\n--- Stage 1: Information Extraction (LLM) for '{base_filename_for_saving}' ---")
@@ -136,19 +143,16 @@ class SentimentPipeline_LLM:
 
             print(f"  IE_LLM: Processing content batch {i+1}/{num_ie_batches} (size: {len(batch_contents)})")
             try:
-                # InformationExtractor_LLM.extract 接收一个内容列表，返回TA对的列表的列表
                 extracted_ta_lists_for_batch = self.information_extractor.extract(batch_contents)
             except Exception as e:
                 print(f"  Error in IE_LLM for content batch {i+1}: {e}")
                 traceback.print_exc()
-                # 为批次中的每个项目填充错误信息
                 extracted_ta_lists_for_batch = [[{"target": "IE_LLM_BATCH_ERROR", "argument": "IE_LLM_BATCH_ERROR"}]] * len(batch_contents)
 
             for j, item_id in enumerate(batch_ids):
-                # 确保 extracted_ta_lists_for_batch 的长度与 batch_ids 匹配
                 if j < len(extracted_ta_lists_for_batch):
                     current_item_ta_pairs = extracted_ta_lists_for_batch[j]
-                else: # 如果IE返回结果少于输入（理论上不应发生，但作为保护）
+                else:
                     current_item_ta_pairs = [{"target":"IE_LLM_ALIGN_ERROR", "argument":"IE_LLM_ALIGN_ERROR"}]
 
                 stage1_all_outputs.append({
@@ -158,20 +162,18 @@ class SentimentPipeline_LLM:
                 })
         self._save_stage_results(stage1_all_outputs, "1_information_extraction_llm", base_filename_for_saving)
 
-        # --- 阶段2: Hateful 分类 (代码保持不变) ---
+        # --- 阶段2: Hateful 分类 ---
         print(f"\n--- Stage 2: Hateful Classification for '{base_filename_for_saving}' ---")
         stage2_all_outputs_with_hate = []
         hate_clf_overall_inputs = []
-        hate_clf_map_back = []
+        hate_clf_map_back = [] # 用于将扁平化的分类结果映射回原始样本和TA对索引
 
         for sample_idx, s1_data in enumerate(stage1_all_outputs):
             stage2_item = {
                 "id": s1_data["id"], "content": s1_data["content"],
-                "extracted_ta_pairs": s1_data["extracted_ta_pairs"], # 从stage1继承
-                "hateful_predictions": []
+                "extracted_ta_pairs": s1_data["extracted_ta_pairs"],
+                "hateful_predictions": [] # 占位符，稍后填充
             }
-            # 检查 extracted_ta_pairs 是否有效且不包含错误标记
-            # (注意：IE_LLM 的错误标记可能不同，需要根据 _parse_ie_string_to_ta_pairs 的实现调整)
             is_valid_ta = False
             if s1_data["extracted_ta_pairs"]:
                 first_ta = s1_data["extracted_ta_pairs"][0]
@@ -181,7 +183,7 @@ class SentimentPipeline_LLM:
                         first_ta.get("argument","").startswith("PARSE_")
                         ):
                     is_valid_ta = True
-
+            
             if is_valid_ta:
                 for ta_idx, ta_pair in enumerate(s1_data["extracted_ta_pairs"]):
                     hate_clf_overall_inputs.append({
@@ -189,73 +191,84 @@ class SentimentPipeline_LLM:
                         "argument": ta_pair.get("argument", "NULL"),
                         "content": s1_data["content"]
                     })
-                    hate_clf_map_back.append((sample_idx, ta_idx))
-                    stage2_item["hateful_predictions"].append({}) # Placeholder
-            else: # 如果IE出错或没有有效的TA对
+                    hate_clf_map_back.append((sample_idx, ta_idx)) # 记录原始样本索引和TA对在该样本中的索引
+                    stage2_item["hateful_predictions"].append({}) # 为每个TA对添加一个hateful预测的占位符
+            else:
                 stage2_item["hateful_predictions"].append({"hateful_label": "SKIPPED_INVALID_IE", "hateful_score": 0.0})
             stage2_all_outputs_with_hate.append(stage2_item)
 
-
         all_hateful_results_flat = []
         if hate_clf_overall_inputs:
-            print(f"  Hate CLF: Processing {len(hate_clf_overall_inputs)} TA pairs in total...")
-            try:
-                all_hateful_results_flat = self.hate_classifier.classify_batch(hate_clf_overall_inputs)
-            except Exception as e:
-                print(f"  Error during batch Hate Classification: {e}")
-                traceback.print_exc()
-                all_hateful_results_flat = [{"hateful_label": "HATE_CLF_ERROR", "hateful_score": 0.0}] * len(hate_clf_overall_inputs)
-
+            num_hate_clf_items = len(hate_clf_overall_inputs)
+            num_hate_batches = (num_hate_clf_items + classifier_internal_batch_size - 1) // classifier_internal_batch_size
+            print(f"  Hate CLF: Processing {num_hate_clf_items} TA pairs in total, across {num_hate_batches} batches (internal batch size: {classifier_internal_batch_size})...")
+            
+            for batch_num in range(num_hate_batches):
+                start_idx = batch_num * classifier_internal_batch_size
+                end_idx = min((batch_num + 1) * classifier_internal_batch_size, num_hate_clf_items)
+                current_batch_for_clf = hate_clf_overall_inputs[start_idx:end_idx]
+                
+                print(f"    Hate CLF: Processing sub-batch {batch_num + 1}/{num_hate_batches} (items {start_idx}-{end_idx-1})")
+                try:
+                    batch_results = self.hate_classifier.classify_batch(current_batch_for_clf)
+                    all_hateful_results_flat.extend(batch_results)
+                except Exception as e:
+                    print(f"    Error during Hate Classification for sub-batch {batch_num + 1}: {e}")
+                    traceback.print_exc()
+                    error_results = [{"hateful_label": "HATE_CLF_BATCH_ERROR", "hateful_score": 0.0}] * len(current_batch_for_clf)
+                    all_hateful_results_flat.extend(error_results)
+        
+        # 将扁平化的结果映射回正确的样本和TA对
         for i, hateful_res in enumerate(all_hateful_results_flat):
             sample_idx, ta_idx = hate_clf_map_back[i]
-            # 确保 hateful_predictions 列表有足够的空间
+            # 确保 hateful_predictions 列表有足够的空间 (之前已用占位符初始化)
             if ta_idx < len(stage2_all_outputs_with_hate[sample_idx]["hateful_predictions"]):
                 stage2_all_outputs_with_hate[sample_idx]["hateful_predictions"][ta_idx] = hateful_res
-            else: # 如果映射关系出错（理论上不应发生）
-                print(f"  Error: ta_idx {ta_idx} out of bounds for hateful_predictions at sample_idx {sample_idx}")
-                # 可以选择追加或记录错误
+            else: 
+                # 理论上不应发生，因为我们为每个有效的TA对都添加了占位符
+                print(f"  Error: ta_idx {ta_idx} out of bounds for hateful_predictions at sample_idx {sample_idx} during mapping back. Appending.")
                 stage2_all_outputs_with_hate[sample_idx]["hateful_predictions"].append(hateful_res)
-
 
         self._save_stage_results(stage2_all_outputs_with_hate, "2_hateful_classification", base_filename_for_saving)
 
-
-        # --- 阶段3: Targeted Group 分类 (代码保持不变) ---
+        # --- 阶段3: Targeted Group 分类 ---
         print(f"\n--- Stage 3: Targeted Group Classification for '{base_filename_for_saving}' ---")
         final_pipeline_results = []
         group_clf_overall_inputs = []
-        group_clf_map_back = []
+        group_clf_map_back = [] # 用于将扁平化的分类结果映射回原始样本和TA对索引
 
         for sample_idx, s2_data in enumerate(stage2_all_outputs_with_hate):
             current_sample_final_output = {
                 "id": s2_data["id"], "content": s2_data["content"],
-                "structured_quadruples": []
+                "structured_quadruples": [] # 占位符
             }
-            # 再次检查 s2_data["extracted_ta_pairs"] 和 s2_data["hateful_predictions"] 的有效性
             is_valid_ta_for_group = False
             if s2_data["extracted_ta_pairs"] and s2_data["hateful_predictions"]:
-                first_ta = s2_data["extracted_ta_pairs"][0]
-                first_hate = s2_data["hateful_predictions"][0]
-                if not (first_ta.get("target","").startswith("IE_") or \
-                        first_ta.get("target","").startswith("PARSE_") or \
-                        first_hate.get("hateful_label","").startswith("SKIPPED_") or \
-                        first_hate.get("hateful_label","").startswith("HATE_CLF_ERROR")
-                        ):
-                    is_valid_ta_for_group = True
+                # 检查第一个TA对和其hateful预测的有效性作为样本级别的快速检查
+                if s2_data["extracted_ta_pairs"]: # 确保列表不为空
+                    first_ta = s2_data["extracted_ta_pairs"][0]
+                    if s2_data["hateful_predictions"]: # 确保列表不为空
+                         first_hate = s2_data["hateful_predictions"][0]
+                         if not (first_ta.get("target","").startswith("IE_") or \
+                                 first_ta.get("target","").startswith("PARSE_") or \
+                                 first_hate.get("hateful_label","").startswith("SKIPPED_") or \
+                                 first_hate.get("hateful_label","").startswith("HATE_CLF_")): # 修正了HATE_CLF_ERROR的检查
+                             is_valid_ta_for_group = True
 
             if is_valid_ta_for_group:
-                 # 确保 extracted_ta_pairs 和 hateful_predictions 长度一致
                 num_pairs = min(len(s2_data["extracted_ta_pairs"]), len(s2_data["hateful_predictions"]))
                 for ta_idx in range(num_pairs):
                     ta_pair = s2_data["extracted_ta_pairs"][ta_idx]
                     hateful_pred = s2_data["hateful_predictions"][ta_idx]
 
-                    # 再次检查单个TA对和hateful预测的有效性
+                    # 对每个TA对和其hateful预测进行详细检查
                     if ta_pair.get("target","").startswith("IE_") or \
                        ta_pair.get("target","").startswith("PARSE_") or \
+                       ta_pair.get("argument","").startswith("IE_") or \
+                       ta_pair.get("argument","").startswith("PARSE_") or \
                        hateful_pred.get("hateful_label","").startswith("SKIPPED_") or \
-                       hateful_pred.get("hateful_label","").startswith("HATE_CLF_ERROR"):
-                        # 如果单个TA对或其hateful预测无效，则为其创建一个表示错误的quadruple
+                       hateful_pred.get("hateful_label","").startswith("HATE_CLF_"): # 修正了HATE_CLF_ERROR的检查
+                        
                         quad = {
                             "target": ta_pair.get("target", "NULL"),
                             "argument": ta_pair.get("argument", "NULL"),
@@ -263,65 +276,144 @@ class SentimentPipeline_LLM:
                             "targeted_group_label": "SKIPPED_INVALID_HATE_OR_IE"
                         }
                         current_sample_final_output["structured_quadruples"].append(quad)
-                        continue # 跳过对此TA对的group分类
+                        continue
 
                     group_clf_overall_inputs.append({
                         "target": ta_pair.get("target", "NULL"),
                         "argument": ta_pair.get("argument", "NULL"),
-                        "hateful_label": hateful_pred.get("hateful_label", "HATE_CLF_ERROR"), # 从s2获取
+                        "hateful_label": hateful_pred.get("hateful_label", "HATE_CLF_ERROR"),
                         "content": s2_data["content"]
                     })
-                    group_clf_map_back.append((sample_idx, ta_idx))
-                    current_sample_final_output["structured_quadruples"].append({}) # Placeholder
-            else: # 如果没有有效的TA对或hateful预测来进行group分类
-                # 即使没有可供group分类的内容，也需要一个空的structured_quadruples或表示错误/跳过的条目
-                # 为了与_format_quadruple_output_string兼容，这里保持为空列表
-                pass
-
+                    group_clf_map_back.append((sample_idx, ta_idx)) # 记录原始样本索引和TA对索引
+                    current_sample_final_output["structured_quadruples"].append({}) # 添加占位符
+            else: # 如果整个样本的IE或Hate分类结果无效
+                # 检查是否有任何TA对，即使它们是错误的，也可能需要格式化输出
+                if s2_data["extracted_ta_pairs"] and s2_data["hateful_predictions"]:
+                    num_pairs = min(len(s2_data["extracted_ta_pairs"]), len(s2_data["hateful_predictions"]))
+                    for ta_idx in range(num_pairs):
+                        ta_pair = s2_data["extracted_ta_pairs"][ta_idx]
+                        hateful_pred = s2_data["hateful_predictions"][ta_idx]
+                        quad = {
+                            "target": ta_pair.get("target", "NULL_IE_S3_SKIP"),
+                            "argument": ta_pair.get("argument", "NULL_IE_S3_SKIP"),
+                            "hateful_label": hateful_pred.get("hateful_label", "NULL_HATE_S3_SKIP"),
+                            "targeted_group_label": "SKIPPED_INVALID_HATE_OR_IE_AT_SAMPLE_LEVEL"
+                        }
+                        current_sample_final_output["structured_quadruples"].append(quad)
+                elif s2_data["extracted_ta_pairs"]: # 只有IE结果，没有Hate结果（不太可能，因为上面有占位符）
+                     for ta_pair in s2_data["extracted_ta_pairs"]:
+                        quad = {
+                            "target": ta_pair.get("target", "NULL_IE_S3_SKIP_NOHATE"),
+                            "argument": ta_pair.get("argument", "NULL_IE_S3_SKIP_NOHATE"),
+                            "hateful_label": "NO_HATE_PRED_AVAILABLE",
+                            "targeted_group_label": "SKIPPED_NO_HATE_PRED"
+                        }
+                        current_sample_final_output["structured_quadruples"].append(quad)
+                # else: 如果连IE结果都没有，structured_quadruples将为空，由_format_quadruple_output_string处理
 
             final_pipeline_results.append(current_sample_final_output)
 
-
         all_group_results_flat = []
         if group_clf_overall_inputs:
-            print(f"  Group CLF: Processing {len(group_clf_overall_inputs)} items for group classification...")
-            try:
-                all_group_results_flat = self.group_classifier.classify_batch(group_clf_overall_inputs)
-            except Exception as e:
-                print(f"  Error during batch Group Classification: {e}")
-                traceback.print_exc()
-                all_group_results_flat = [{"targeted_group_label": "GROUP_CLF_ERROR", "targeted_group_score": 0.0}] * len(group_clf_overall_inputs)
+            num_group_clf_items = len(group_clf_overall_inputs)
+            num_group_batches = (num_group_clf_items + classifier_internal_batch_size - 1) // classifier_internal_batch_size
+            print(f"  Group CLF: Processing {num_group_clf_items} items for group classification, across {num_group_batches} batches (internal batch size: {classifier_internal_batch_size})...")
 
+            for batch_num in range(num_group_batches):
+                start_idx = batch_num * classifier_internal_batch_size
+                end_idx = min((batch_num + 1) * classifier_internal_batch_size, num_group_clf_items)
+                current_batch_for_clf = group_clf_overall_inputs[start_idx:end_idx]
+
+                print(f"    Group CLF: Processing sub-batch {batch_num + 1}/{num_group_batches} (items {start_idx}-{end_idx-1})")
+                try:
+                    batch_results = self.group_classifier.classify_batch(current_batch_for_clf)
+                    all_group_results_flat.extend(batch_results)
+                except Exception as e:
+                    print(f"    Error during Group Classification for sub-batch {batch_num + 1}: {e}")
+                    traceback.print_exc()
+                    error_results = [{"targeted_group_label": "GROUP_CLF_BATCH_ERROR", "targeted_group_score": 0.0}] * len(current_batch_for_clf)
+                    all_group_results_flat.extend(error_results)
+
+        # 将扁平化的group结果映射回正确的样本和TA对位置
+        processed_group_clf_item_idx = 0 # 追踪在 all_group_results_flat 中的当前项
+        for sample_idx, res_item in enumerate(final_pipeline_results):
+            # 遍历此样本中预留的 structured_quadruples 占位符
+            # 只有那些成功进入 group_clf_overall_inputs 的项才会被填充
+            # 其他的（如SKIPPED的）会保留它们在上面设置的错误/跳过标签
+            
+            # 我们需要一种方法来只更新那些被发送到group_classifier的条目
+            # group_clf_map_back 告诉我们 all_group_results_flat 中的第 i 个结果
+            # 对应于原始数据的 sample_idx 和 ta_idx。
+            # 我们需要迭代 group_clf_map_back 来填充结果。
+            pass # 移除旧的填充逻辑，将在下面使用 group_clf_map_back
+
+
+        # 使用 group_clf_map_back 来填充 group classification 的结果
         for i, group_res in enumerate(all_group_results_flat):
-            sample_idx, ta_idx = group_clf_map_back[i]
+            sample_idx, ta_idx_in_s2 = group_clf_map_back[i] # ta_idx_in_s2 是在 s2_data.extracted_ta_pairs 中的索引
 
-            # 从原始阶段数据中获取信息来构建完整的 quadruple
-            # 注意：这里依赖于 stage1 和 stage2 的输出结构
-            # 需要确保即使在错误情况下，这些结构也包含必要的键
-            original_ta_pair = stage1_all_outputs[sample_idx]["extracted_ta_pairs"][ta_idx] \
-                if sample_idx < len(stage1_all_outputs) and \
-                   ta_idx < len(stage1_all_outputs[sample_idx]["extracted_ta_pairs"]) else \
-                   {"target": "ERROR_ACCESSING_S1_TA", "argument": "ERROR_ACCESSING_S1_TA"}
+            # 确保 s2_data 结构正确
+            if sample_idx >= len(stage2_all_outputs_with_hate):
+                print(f"  Error: sample_idx {sample_idx} out of bounds for stage2_all_outputs_with_hate during group result mapping.")
+                continue
+            s2_data = stage2_all_outputs_with_hate[sample_idx]
 
-            original_hateful_pred = stage2_all_outputs_with_hate[sample_idx]["hateful_predictions"][ta_idx] \
-                if sample_idx < len(stage2_all_outputs_with_hate) and \
-                   ta_idx < len(stage2_all_outputs_with_hate[sample_idx]["hateful_predictions"]) else \
-                   {"hateful_label": "ERROR_ACCESSING_S2_HATE"}
+            if ta_idx_in_s2 >= len(s2_data["extracted_ta_pairs"]) or \
+               ta_idx_in_s2 >= len(s2_data["hateful_predictions"]):
+                print(f"  Error: ta_idx_in_s2 {ta_idx_in_s2} out of bounds for s2_data at sample_idx {sample_idx}.")
+                continue
+
+            original_ta_pair = s2_data["extracted_ta_pairs"][ta_idx_in_s2]
+            original_hateful_pred = s2_data["hateful_predictions"][ta_idx_in_s2]
 
             quad = {
                 "target": original_ta_pair.get("target", "NULL"),
                 "argument": original_ta_pair.get("argument", "NULL"),
                 "hateful_label": original_hateful_pred.get("hateful_label", "HATE_CLF_ERROR"),
                 "targeted_group_label": group_res.get("targeted_group_label", "GROUP_CLF_ERROR"),
-                # 可以选择性加入scores
-                # "hateful_score": original_hateful_pred.get("hateful_score", 0.0),
-                # "targeted_group_score": group_res.get("targeted_group_score", 0.0)
             }
-            # 确保 final_pipeline_results[sample_idx]["structured_quadruples"] 有足够的空间
-            if ta_idx < len(final_pipeline_results[sample_idx]["structured_quadruples"]):
-                final_pipeline_results[sample_idx]["structured_quadruples"][ta_idx] = quad
-            else: # 理论上不应发生，如果发生了，可能是占位符逻辑问题
-                print(f"  Error: ta_idx {ta_idx} out of bounds for structured_quadruples at sample_idx {sample_idx}")
+
+            # 在 final_pipeline_results 中找到对应的位置并更新
+            # 这依赖于 structured_quadruples 中占位符的顺序与 s2_data.extracted_ta_pairs 的顺序一致
+            # 并且，只有那些实际送去group分类的项才会被这里的循环更新，其他已填充为SKIPPED的项不受影响。
+            
+            # 找到 final_pipeline_results[sample_idx]["structured_quadruples"] 中对应的占位符
+            # 这是一个微妙之处：current_sample_final_output["structured_quadruples"].append({})
+            # 创建了占位符。我们需要确保这个占位符与 ta_idx_in_s2 对应。
+            # ta_idx_in_s2 是在原始 s2_data["extracted_ta_pairs"] 中的索引。
+            # current_sample_final_output["structured_quadruples"] 的填充逻辑可能需要调整
+            # 以确保能正确匹配。
+            
+            # 简化：structured_quadruples 的索引 ta_idx 应该直接对应 s2_data 中的 ta_idx
+            # 我们之前在构建 group_clf_overall_inputs 时，如果某个 TA 对被跳过，
+            # 它的 quad 已经被完整填充了。如果它没被跳过，则 append({}) 了一个占位符。
+            # 所以，group_clf_map_back 中的 (sample_idx, ta_idx_in_s2) 里的 ta_idx_in_s2
+            # 应该与 structured_quadruples 中占位符的索引（或已跳过项的索引）相对应。
+            
+            # 让我们重新审视 final_pipeline_results[sample_idx]["structured_quadruples"] 的填充
+            # 在创建 group_clf_overall_inputs 的循环中：
+            # - 如果跳过，一个完整的 quad 被加入。
+            # - 如果不跳过，一个 {} 占位符被加入。
+            # 这意味着 structured_quadruples 的长度和顺序与 s2_data["extracted_ta_pairs"] (和 hateful_predictions) 匹配。
+            # 因此，ta_idx_in_s2 可以直接用作 structured_quadruples 的索引。
+
+            if ta_idx_in_s2 < len(final_pipeline_results[sample_idx]["structured_quadruples"]):
+                # 只有当该位置是之前留下的占位符 {} 时才更新，
+                # 如果已经是填充好的SKIPPED条目，则不应覆盖。
+                if final_pipeline_results[sample_idx]["structured_quadruples"][ta_idx_in_s2] == {}:
+                    final_pipeline_results[sample_idx]["structured_quadruples"][ta_idx_in_s2] = quad
+                else:
+                    # 这意味着该位置已经被一个 "SKIPPED" 条目填充，不应该被覆盖
+                    # 但 group_clf_map_back 不应该包含 SKIPPED 的条目，所以这里可能存在逻辑冲突
+                    # 如果 group_clf_overall_inputs 只包含有效条目，那么 map_back 的 ta_idx
+                    # 应该总是指向一个需要被填充的 {}。
+                    # 除非在填充 structured_quadruples 时，对于有效条目也错误地填充了非 {} 内容。
+                    # 检查：current_sample_final_output["structured_quadruples"].append({}) # Placeholder
+                    # 这是正确的。所以，如果这里不为 {}，说明之前的逻辑有误，或者 map_back 索引错了。
+                    # 最可能的是，map_back的ta_idx_in_s2是正确的，应该直接赋值。
+                     final_pipeline_results[sample_idx]["structured_quadruples"][ta_idx_in_s2] = quad
+            else:
+                print(f"  Error: ta_idx_in_s2 {ta_idx_in_s2} out of bounds for structured_quadruples at sample_idx {sample_idx} during group result update. Appending.")
                 final_pipeline_results[sample_idx]["structured_quadruples"].append(quad)
 
 
@@ -334,12 +426,11 @@ class SentimentPipeline_LLM:
         print(f"Dataset '{base_filename_for_saving}' processing finished with LLM_1 pipeline.")
         return final_pipeline_results
 
-    # process_json_file 方法保持不变，它会调用 process_dataset
+    # process_json_file 方法保持不变
     def process_json_file(self, input_json_path: str, output_json_path: Optional[str] = None,
-                          pipeline_batch_size: int = 32) -> List[Dict]:
+                          pipeline_batch_size: int = 32) -> List[Dict]: # pipeline_batch_size here is for IE
         print(f"Loading input data from '{input_json_path}' using HateOriDataset...")
         try:
-            # is_pred=True 表明我们不需要标签，只处理 id 和 content
             input_dataset = HateOriDataset(json_file_path=input_json_path, is_pred=True)
             if not input_dataset or len(input_dataset) == 0:
                 print("输入JSON文件为空或HateOriDataset未能加载任何数据。")
@@ -350,13 +441,11 @@ class SentimentPipeline_LLM:
 
         input_data_tuples = []
         for i in range(len(input_dataset)):
-            # HateOriDataset 在 is_pred=True 时，getitem应该返回 (id, content, None) 或类似结构
-            # 我们需要确保只取 id 和 content
             try:
                 item_data = input_dataset[i]
-                if len(item_data) >= 2: # 至少有id和content
+                if len(item_data) >= 2:
                     item_id, content = item_data[0], item_data[1]
-                else: # 结构不符合预期
+                else:
                     print(f"警告: HateOriDataset 返回的数据结构不符合预期 (索引 {i}): {item_data}。跳过。")
                     continue
 
@@ -376,7 +465,7 @@ class SentimentPipeline_LLM:
 
         all_processed_results = self.process_dataset(
             input_data_tuples,
-            pipeline_batch_size=pipeline_batch_size, # IE_LLM的批处理大小
+            pipeline_batch_size=pipeline_batch_size, # This is for IE LLM batching
             base_filename_for_saving=base_input_filename
         )
 
@@ -393,8 +482,8 @@ class SentimentPipeline_LLM:
                 print(f"保存最终输出JSON文件时出错: {e}")
 
         return all_processed_results
-    
-    
+
+
 # 在 pipeline_llm_1.py 的末尾
 if __name__ == "__main__":
     # --- LLM IE 模型路径 ---
@@ -409,14 +498,14 @@ if __name__ == "__main__":
     GROUP_CLF_BASE_MODEL = "models/chinese-roberta-wwm-ext-large"
 
     # --- 输入输出路径 ---
-    INPUT_TEST_JSON_PATH = "data/segment/test.json" 
-    PIPELINE_LLM1_INTERMEDIATE_STAGES_DIR = "data/outputs/pipeline_llm_stages_output" # 新的中间结果目录
-    FINAL_PREDICTIONS_LLM1_OUTPUT_PATH = "data/outputs/pipeline_llm_final_predictions.json" # 新的最终输出文件
+    INPUT_TEST_JSON_PATH = "data/original/test1.json"
+    PIPELINE_LLM1_INTERMEDIATE_STAGES_DIR = "data/original/outputs/test1" # 新的中间结果目录
+    FINAL_PREDICTIONS_LLM1_OUTPUT_PATH = "data/original/outputs/test1.json" # 新的最终输出文件
 
     print("检查模型和输入文件路径 (LLM_1 Pipeline)...")
     required_paths_info = {
-        "IE LLM Base Model Dir": (IE_LLM_BASE_MODEL, True, "config.json"), # 检查Qwen模型目录
-        "IE LLM LoRA Checkpoint Dir": (IE_LLM_LORA_CHECKPOINT, True, "adapter_model.safetensors"), # 或 adapter_model.bin
+        "IE LLM Base Model Dir": (IE_LLM_BASE_MODEL, True, "config.json"),
+        "IE LLM LoRA Checkpoint Dir": (IE_LLM_LORA_CHECKPOINT, True, "adapter_model.safetensors"),
         "Hate CLF Checkpoint Dir": (HATE_CLF_CHECKPOINT_PATH, True, "pytorch_model.bin"),
         "Hate CLF Base Model Dir": (HATE_CLF_BASE_MODEL, True, "config.json"),
         "Group CLF Checkpoint Dir": (GROUP_CLF_CHECKPOINT_PATH, True, "pytorch_model.bin"),
@@ -428,12 +517,11 @@ if __name__ == "__main__":
         path_exists = os.path.exists(path)
         content_ok = True
         if path_exists and is_dir and expected_file:
-            # LoRA权重的检查可能需要更具体，adapter_config.json 通常存在
             if expected_file == "adapter_model.safetensors" and not os.path.exists(os.path.join(path, expected_file)) \
                and not os.path.exists(os.path.join(path, "adapter_model.bin")):
                 content_ok = False; print(f"错误: {name} 目录 '{path}' 缺少 '{expected_file}' 或 'adapter_model.bin'。")
             elif not os.path.exists(os.path.join(path, expected_file)) and \
-                 not (expected_file == "adapter_model.safetensors" and os.path.exists(os.path.join(path, "adapter_model.bin"))):
+                 not (expected_file == "adapter_model.safetensors" and os.path.exists(os.path.join(path, "adapter_model.bin"))): # Handle adapter_model.bin alternative for LoRA
                 content_ok = False; print(f"错误: {name} 目录 '{path}' 缺少 '{expected_file}'。")
 
         if not path_exists or not content_ok:
@@ -455,14 +543,15 @@ if __name__ == "__main__":
                 group_clf_base_model_name_or_path=GROUP_CLF_BASE_MODEL,
                 device="cuda" if torch.cuda.is_available() else "cpu",
                 output_intermediate_dir=PIPELINE_LLM1_INTERMEDIATE_STAGES_DIR,
-                max_seq_length_ie_llm=256 # 根据你的IE输出长度调整
+                max_seq_length_ie_llm=256
             )
 
             print(f"\n--- 开始处理测试文件 (LLM_1 Pipeline): {INPUT_TEST_JSON_PATH} ---")
+            # pipeline_batch_size=4 in main is for IE LLM. Classifier batching is internal.
             final_results_list = pipeline_llm1.process_json_file(
                 input_json_path=INPUT_TEST_JSON_PATH,
                 output_json_path=FINAL_PREDICTIONS_LLM1_OUTPUT_PATH,
-                pipeline_batch_size=4 # LLM IE 可能比较慢，减小批次大小
+                pipeline_batch_size=4 
             )
 
             if final_results_list:

@@ -67,7 +67,7 @@ class InformationExtractor_LLM:
             print("IE_LLM: 基础模型加载完成。")
 
             print(f"IE_LLM: 正在从以下路径加载 LoRA 适配器并应用到基础模型: {lora_adapter_path}")
-            self.model = PeftModel.from_pretrained(base_model_obj, lora_adapter_path)
+            self.model = PeftModel.from_pretrained(base_model_obj, lora_adapter_path,auto_map="true")
             print("IE_LLM: LoRA 适配器层已加载。")
 
             print("IE_LLM: 正在合并 LoRA 适配器权重到基础模型...")
